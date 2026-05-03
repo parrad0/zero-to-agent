@@ -1,10 +1,14 @@
 export interface Philosopher {
   id: string;
   name: string;
-  title: string;
-  avatar: string;
-  color: string;
-  borderColor: string;
+  systemPrompt: string;
+}
+
+export interface DynamicSpeaker {
+  id: string;
+  name: string;
+  short: string;
+  years: string;
   systemPrompt: string;
 }
 
@@ -18,25 +22,15 @@ export interface Message {
   isThinking?: boolean;
 }
 
-export interface DebateState {
-  id: string;
-  topic: string;
-  messages: Message[];
-  philosophers: Philosopher[];
-  status: "idle" | "running" | "paused" | "complete";
-  currentSpeakerIndex: number;
-  rounds: number;
-  maxRounds: number;
-}
-
-export interface DebateResponse {
-  stream: ReadableStream;
-  philosopherId: string;
-}
-
-export type DebateEvent = 
+export type DebateEvent =
   | { type: "thinking"; philosopherId: string }
   | { type: "message"; message: Message }
-  | { type: "round_complete"; round: number }
+  | { type: "timer"; remainingMs: number }
+  | { type: "speaker_start"; philosopherId: string; topic: string; round: number; timestamp: number }
+  | { type: "speaker_message"; philosopherId: string; content: string; timestamp: number }
+  | { type: "speaker_end"; philosopherId: string; timestamp: number }
+  | { type: "next_debate"; topics: string[]; countdownMs: number; timestamp: number }
+  | { type: "topic_change"; topic: string }
   | { type: "debate_complete"; summary: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "cast_selected"; speakers: DynamicSpeaker[] };

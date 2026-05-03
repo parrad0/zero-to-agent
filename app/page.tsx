@@ -1,185 +1,237 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import type { Message, Philosopher, DebateEvent } from "@/lib/agents/types";
-import { philosophers } from "@/lib/agents/philosophers";
-import { philosophers as allPhilosophers } from "@/lib/agents/philosophers";
-import DebateRoom from "@/components/debate/DebateRoom";
-import TopicInput from "@/components/debate/TopicInput";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useDebateStream } from "@/hooks/useDebateStream";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { AvatarPanel } from "@/components/debate/AvatarPanel";
+import { ChatPanel } from "@/components/debate/ChatPanel";
+import { ArchiveDrawer, type PastDebate } from "@/components/debate/ArchiveDrawer";
+import { RatingScreen } from "@/components/debate/RatingScreen";
+import { WaitingScreen } from "@/components/debate/WaitingScreen";
+import { MobileHeader } from "@/components/debate/MobileHeader";
+import type { Message } from "@/lib/agents/types";
+
+const BETWEEN_DEBATES_SECONDS = 20;
+
+function MenuButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label="Open menu"
+      style={{
+        width: "40px",
+        height: "40px",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(255,255,255,0.85)",
+        border: "1px solid rgba(0,0,0,0.08)",
+        borderRadius: "10px",
+        cursor: "pointer",
+        padding: 0,
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+      }}
+    >
+      <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+        <path d="M1 1h16M1 7h16M1 13h16" stroke="#1d1d1f" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
 
 export default function Home() {
-  const [debateTopic, setDebateTopic] = useState<string>("");
-  const [selectedPhilosophers, setSelectedPhilosophers] = useState<Philosopher[]>(
-    allPhilosophers.slice(0, 4)
-  );
-  const [isDebating, setIsDebating] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [thinkingPhilosophers, setThinkingPhilosophers] = useState<Set<string>>(new Set());
-  const [currentRound, setCurrentRound] = useState(0);
-  const [hasStarted, setHasStarted] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { topic, messages, activeSpeakerId, activeSpeech, stageStatus, nextDebate, cast } =
+    useDebateStream();
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const isMobile = useIsMobile(820);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [viewing, setViewing] = useState<string>("live");
+  const [pastDebates, setPastDebates] = useState<PastDebate[]>([]);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+
+  // ID returned by POST /api/debates after saving — used for casting votes
+  const [savedDebateId, setSavedDebateId] = useState<string | null>(null);
+  // Local vote for the current debate (not synced across users — metadata only)
+  const [myVote, setMyVote] = useState<"up" | "down" | null>(null);
+
+  const topicRef = useRef(topic);
+  const messagesRef = useRef(messages);
+  topicRef.current = topic;
+  messagesRef.current = messages;
+
+  const savedRef = useRef<Set<string>>(new Set());
+
+  // Reset vote when a new debate starts
+  useEffect(() => {
+    if (stageStatus === "debating") {
+      setMyVote(null);
+      setSavedDebateId(null);
+    }
+  }, [stageStatus]);
+
+  // Load past debates on mount
+  useEffect(() => {
+    fetch("/api/debates")
+      .then((r) => r.json())
+      .then((data: PastDebate[]) => setPastDebates(data))
+      .catch(() => {});
   }, []);
 
+  // When a debate finishes: save to DB, get back the ID for voting
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    if (stageStatus !== "complete") return;
 
-  const togglePhilosopher = (philosopher: Philosopher) => {
-    setSelectedPhilosophers((prev) => {
-      const isSelected = prev.some((p) => p.id === philosopher.id);
-      if (isSelected) {
-        if (prev.length <= 2) return prev;
-        return prev.filter((p) => p.id !== philosopher.id);
-      } else {
-        if (prev.length >= 5) return prev;
-        return [...prev, philosopher];
-      }
-    });
-  };
+    const t = topicRef.current;
+    const m = messagesRef.current.filter((msg) => msg.philosopherId !== "system");
+    const saveKey = `${t}|complete`;
 
-  const startDebate = async () => {
-    if (!debateTopic.trim()) return;
+    if (!t || m.length === 0 || savedRef.current.has(saveKey)) return;
+    savedRef.current.add(saveKey);
 
-    setIsDebating(true);
-    setHasStarted(true);
-    setMessages([]);
-    setCurrentRound(0);
+    fetch("/api/debates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: t,
+        messages: m.map((msg) => ({ philosopherId: msg.philosopherId, speaker: msg.speaker, content: msg.content })),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data: { success: boolean; id?: string }) => {
+        if (data.id) setSavedDebateId(data.id);
+        // Refresh archive
+        return fetch("/api/debates")
+          .then((r) => r.json())
+          .then((list: PastDebate[]) => setPastDebates(list));
+      })
+      .catch(() => {});
+  }, [stageStatus]);
 
-    try {
-      const response = await fetch("/api/debate", {
+  const castVote = useCallback(
+    (kind: "up" | "down") => {
+      if (myVote || !savedDebateId) return;
+      setMyVote(kind);
+      fetch(`/api/debates/${encodeURIComponent(savedDebateId)}/vote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: debateTopic,
-          philosophers: selectedPhilosophers.map((p) => p.id),
-          maxRounds: 3,
-        }),
-      });
+        body: JSON.stringify({ kind }),
+      }).catch(() => {});
+    },
+    [myVote, savedDebateId]
+  );
 
-      if (!response.body) throw new Error("No stream");
+  const isLiveView = viewing === "live";
+  const sessionState: "live" | "closed" =
+    isLiveView && stageStatus === "debating" ? "live" : "closed";
+  const showRating = isLiveView && stageStatus === "next_debate" && !!nextDebate;
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+  useEffect(() => {
+    if (!showRating || !nextDebate) { setSecondsLeft(0); return; }
+    const tick = () => setSecondsLeft(Math.max(0, Math.ceil((nextDebate.endsAt - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, [showRating, nextDebate]);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+  const currentTopic = topic || "The Afterlife Forum";
+  const nextTopic = nextDebate?.topic ?? "";
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n\n");
+  const pastDebate = !isLiveView ? pastDebates.find((d) => d.id === viewing) : null;
+  const displayMessages: Message[] = isLiveView
+    ? messages
+    : pastDebate
+    ? pastDebate.messages.map((m, i) => ({
+        id: `${m.philosopherId}-${i}`,
+        philosopherId: m.philosopherId,
+        speaker: m.speaker || m.philosopherId,
+        avatar: "",
+        content: m.content,
+        timestamp: Date.now() - (pastDebate.messages.length - i) * 60000,
+      }))
+    : messages;
 
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const event = JSON.parse(line.slice(6)) as DebateEvent;
-              handleDebateEvent(event);
-            } catch (e) {
-              console.error("Failed to parse event:", e);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Debate error:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          philosopherId: "error",
-          speaker: "Error",
-          avatar: "⚠️",
-          content: "Algo salió mal. Intenta de nuevo.",
-          timestamp: Date.now(),
-        },
-      ]);
-    } finally {
-      setIsDebating(false);
-      setThinkingPhilosophers(new Set());
-    }
+  const mobileHeader = isMobile ? (
+    <MobileHeader
+      topic={isLiveView ? currentTopic : (pastDebate?.topic ?? currentTopic)}
+      sessionState={sessionState}
+      onMenu={() => setDrawerOpen(true)}
+    />
+  ) : null;
+
+  const ratingProps = {
+    topic: currentTopic,
+    nextTopic,
+    secondsLeft,
+    totalSeconds: BETWEEN_DEBATES_SECONDS,
+    myVote,
+    onVote: castVote,
   };
-
-  const handleDebateEvent = (event: DebateEvent) => {
-    switch (event.type) {
-      case "thinking":
-        setThinkingPhilosophers((prev) => new Set([...prev, event.philosopherId]));
-        break;
-      case "message":
-        setThinkingPhilosophers((prev) => {
-          const next = new Set(prev);
-          next.delete(event.message.philosopherId);
-          return next;
-        });
-        setMessages((prev) => [...prev, event.message]);
-        break;
-      case "round_complete":
-        setCurrentRound(event.round);
-        break;
-      case "debate_complete":
-        setCurrentRound(event.round);
-        break;
-    }
-  };
-
-  const resetDebate = () => {
-    setHasStarted(false);
-    setMessages([]);
-    setIsDebating(false);
-    setCurrentRound(0);
-    setThinkingPhilosophers(new Set());
-  };
-
-  if (!hasStarted) {
-    return (
-      <TopicInput
-        philosophers={allPhilosophers}
-        selectedPhilosophers={selectedPhilosophers}
-        onToggle={togglePhilosopher}
-        onStart={startDebate}
-        isStarting={isDebating}
-      />
-    );
-  }
 
   return (
-    <div className="min-h-screen bg-zinc-950">
-      <header className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <button
-            onClick={resetDebate}
-            className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors"
-          >
-            <span>←</span>
-            <span>Nuevo Debate</span>
-          </button>
-          <h1 className="text-xl font-bold text-white">
-            <span className="text-amber-500">The</span> Afterlife Forum
-          </h1>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-zinc-500">Ronda {currentRound}/3</span>
-            {isDebating && (
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+    <div
+      style={{
+        width: "100vw",
+        height: "100vh",
+        display: "flex",
+        overflow: "hidden",
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif',
+        color: "#1d1d1f",
+        background: "#fff",
+      }}
+    >
+      {/* Desktop */}
+      {!isMobile && (
+        <>
+          <div style={{ position: "fixed", top: "20px", left: "20px", zIndex: 80 }}>
+            <MenuButton onClick={() => setDrawerOpen(true)} />
+          </div>
+          <div style={{ flex: "3 1 0", position: "relative", display: "flex", minWidth: 0 }}>
+            <AvatarPanel
+              activeSpeakerId={isLiveView ? activeSpeakerId : null}
+              streamingText={isLiveView ? activeSpeech : ""}
+              topic={isLiveView ? currentTopic : (pastDebate?.topic ?? currentTopic)}
+              sessionState={sessionState}
+              cast={cast}
+            />
+            {isLiveView && (stageStatus === "idle" || stageStatus === "complete") && (
+              <WaitingScreen />
             )}
+            {showRating && <RatingScreen {...ratingProps} isMobile={false} />}
+          </div>
+        </>
+      )}
+
+      {/* Mobile */}
+      {isMobile && showRating ? (
+        <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", minHeight: 0 }}>
+          {mobileHeader}
+          <div style={{ flex: 1, position: "relative" }}>
+            <RatingScreen {...ratingProps} isMobile={true} />
           </div>
         </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-8">
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-white text-center">
-            {debateTopic}
-          </h2>
-        </div>
-        <DebateRoom
-          messages={messages}
-          philosophers={selectedPhilosophers}
-          thinkingPhilosophers={thinkingPhilosophers}
-          isDebating={isDebating}
+      ) : (
+        <ChatPanel
+          messages={displayMessages}
+          activeSpeakerId={isLiveView ? activeSpeakerId : null}
+          activeSpeech={isLiveView ? activeSpeech : ""}
+          sessionState={isLiveView ? sessionState : "closed"}
+          isMobile={isMobile}
+          headerSlot={mobileHeader}
+          cast={cast}
         />
-        <div ref={messagesEndRef} />
-      </main>
+      )}
+
+      <ArchiveDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        currentView={viewing}
+        liveTopic={currentTopic}
+        liveVotes={{ likes: 0, dislikes: 0, myVote: null }}
+        pastDebates={pastDebates}
+        onSelect={(id) => setViewing(id)}
+        onSelectLive={() => setViewing("live")}
+      />
     </div>
   );
 }
