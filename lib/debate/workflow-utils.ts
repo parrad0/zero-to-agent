@@ -5,7 +5,12 @@ export async function emit(event: DebateEvent) {
   "use step";
   const writer = getWritable<DebateEvent>().getWriter();
   try {
-    await writer.write(event);
+    // Silently drop the event if write stalls — keeps the run alive when no
+    // consumer is connected and the internal buffer backs up.
+    await Promise.race([
+      writer.write(event),
+      new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
+    ]);
   } finally {
     writer.releaseLock();
   }

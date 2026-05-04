@@ -16,7 +16,7 @@ import { setDebateRunId } from "@/lib/kv/debate";
 const MESSAGES_PER_DEBATE = 10; // ~2-3 full rounds with 4 speakers (testing)
 const HISTORY_LIMIT = 30;
 const SPEAKER_PAUSE_SECONDS = 2;
-const BETWEEN_DEBATES_PAUSE_SECONDS = 20;
+const BETWEEN_DEBATES_PAUSE_SECONDS = 10;
 
 const DEFAULT_CAST: DynamicSpeaker[] = PERSONAS.map((persona) => {
   const phil = philosophers.find((p) => p.id === persona.id);

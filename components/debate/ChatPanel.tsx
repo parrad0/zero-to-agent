@@ -23,6 +23,7 @@ function fallbackPersona(philosopherId: string, speaker?: string): Persona {
 
 interface ChatPanelProps {
   messages: Message[];
+  thinkingSet?: Set<string>;
   activeSpeakerId: string | null;
   activeSpeech: string;
   sessionState: "live" | "closed";
@@ -201,8 +202,74 @@ function ClosedFooter() {
   );
 }
 
+function TypingIndicator({ persona }: { persona: Persona }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: "8px",
+        marginTop: "10px",
+        alignItems: "flex-end",
+      }}
+    >
+      <div style={{ width: "28px", flexShrink: 0 }}>
+        <div
+          style={{
+            width: "28px",
+            height: "28px",
+            borderRadius: "50%",
+            background: `radial-gradient(circle at 35% 30%, hsl(${persona.hue}, 80%, 85%), hsl(${persona.hue}, 60%, 65%))`,
+            boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+          }}
+        />
+      </div>
+      <div>
+        <div
+          style={{
+            fontSize: "12px",
+            fontWeight: 600,
+            color: persona.bubbleText,
+            marginBottom: "3px",
+            marginLeft: "2px",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          {persona.short}
+        </div>
+        <div
+          style={{
+            background: persona.bubbleBg,
+            padding: "10px 14px",
+            borderRadius: "14px",
+            borderTopLeftRadius: "4px",
+            display: "flex",
+            gap: "5px",
+            alignItems: "center",
+          }}
+        >
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              style={{
+                width: "5px",
+                height: "5px",
+                borderRadius: "50%",
+                background: persona.bubbleText,
+                opacity: 0.6,
+                display: "inline-block",
+                animation: `dot-bounce 1.2s ease-in-out ${i * 0.18}s infinite`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ChatPanel({
   messages,
+  thinkingSet,
   activeSpeakerId,
   activeSpeech,
   sessionState,
@@ -339,6 +406,19 @@ export function ChatPanel({
                 streaming={true}
               />
             );
+          })()}
+
+        {sessionState === "live" &&
+          (() => {
+            // Show typing dots when someone is thinking or speaker started but hasn't spoken yet.
+            const typingId =
+              (activeSpeakerId && !activeSpeech) ? activeSpeakerId
+              : thinkingSet && thinkingSet.size > 0
+                ? cast.find((p) => thinkingSet.has(p.id))?.id ?? [...thinkingSet][0]
+                : null;
+            if (!typingId) return null;
+            const persona = cast.find((p) => p.id === typingId) ?? fallbackPersona(typingId);
+            return <TypingIndicator persona={persona} />;
           })()}
 
         {sessionState === "closed" && <ClosedFooter />}

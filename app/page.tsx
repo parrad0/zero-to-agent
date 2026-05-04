@@ -11,7 +11,7 @@ import { WaitingScreen } from "@/components/debate/WaitingScreen";
 import { MobileHeader } from "@/components/debate/MobileHeader";
 import type { Message } from "@/lib/agents/types";
 
-const BETWEEN_DEBATES_SECONDS = 20;
+const BETWEEN_DEBATES_SECONDS = 10;
 
 function MenuButton({ onClick }: { onClick: () => void }) {
   return (
@@ -41,7 +41,7 @@ function MenuButton({ onClick }: { onClick: () => void }) {
 }
 
 export default function Home() {
-  const { topic, messages, activeSpeakerId, activeSpeech, stageStatus, nextDebate, cast } =
+  const { topic, messages, thinkingSet, activeSpeakerId, activeSpeech, stageStatus, nextDebate, cast } =
     useDebateStream();
 
   const isMobile = useIsMobile(820);
@@ -213,6 +213,7 @@ export default function Home() {
       ) : (
         <ChatPanel
           messages={displayMessages}
+          thinkingSet={isLiveView ? thinkingSet : new Set()}
           activeSpeakerId={isLiveView ? activeSpeakerId : null}
           activeSpeech={isLiveView ? activeSpeech : ""}
           sessionState={isLiveView ? sessionState : "closed"}
